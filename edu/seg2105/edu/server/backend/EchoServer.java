@@ -4,6 +4,8 @@ package edu.seg2105.edu.server.backend;
 // license found at www.lloseng.com 
 
 
+import java.io.IOException;
+
 import ocsf.server.*;
 
 /**
@@ -23,6 +25,7 @@ public class EchoServer extends AbstractServer
    * The default port to listen on.
    */
   final public static int DEFAULT_PORT = 5555;
+  private final java.util.concurrent.ConcurrentMap<ConnectionToClient, String> clientToId = new java.util.concurrent.ConcurrentHashMap<>();
   
   //Constructors ****************************************************
   
@@ -48,8 +51,53 @@ public class EchoServer extends AbstractServer
   public void handleMessageFromClient
     (Object msg, ConnectionToClient client)
   {
-    System.out.println("Message received: " + msg + " from " + client);
-    this.sendToAllClients(msg);
+    if(!(msg instanceof String s)) return;
+    
+    String currentId = (String) client.getInfo("loginID");
+    String serverFrom = (currentId == null ? "null" : currentId);
+    System.out.println("Message recieved: " + s + " from " + serverFrom + ".");
+    
+    if(currentId == null) {
+    	if(s.startsWith("#login ")) {
+    		String id = s.substring(7).trim();
+    		if(id.isEmpty()) {
+    			sendSafely(client, "ERROR: missing login id; disconnecting.");
+    			closeSafely(client);
+    			return;
+    		}
+    		client.setInfo("loginID", id);
+    		client.setInfo("loginId", id);
+    		clientToId.put(client, id);
+    		
+    		System.out.println(id + " has logged on.");
+    		sendToAllClients(id + " has logged on.");
+    		return;
+    	} else {
+    		sendSafely(client, "ERROR: first message must be #login <id>; disconnecting.");
+    		closeSafely(client);
+    		return;
+    	}
+    }
+    
+    if(s.startsWith("#login ")) {
+    	sendSafely(client, "ERROR: already logged in; connection will close.");
+    	closeSafely(client);
+    	return;
+    }
+    
+    String tagged = currentId + "> " + s;
+    System.out.println("[MSG] " + tagged);
+    sendToAllClients(tagged);
+    
+  }
+  
+  private void sendSafely(ConnectionToClient c, String m) {
+	  try { c.sendToClient(m); } catch (Exception ignored) {}
+	  
+  }
+  
+  private void closeSafely(ConnectionToClient c) {
+	  try { c.close(); } catch (Exception ignored) {}
   }
     
   /**
@@ -61,6 +109,47 @@ public class EchoServer extends AbstractServer
     System.out.println
       ("Server listening for connections on port " + getPort());
   }
+  
+  /**
+   * This method overrides the one in the superclass. 
+   * Called when a Client is connected.
+   * 
+   * @param client The connection from the client
+   */
+  @Override
+  protected void clientConnected(ConnectionToClient client) {
+	  
+	  System.out.println("A new client has connected to the server.");
+	  
+  }
+  
+  @Override
+  synchronized protected void clientDisconnected(ConnectionToClient client) {
+	  String id = (String) client.getInfo("loginId");
+	  
+	  if(id == null) id = (String) client.getInfo("loginId");
+	  if(id == null) id = clientToId.get(client);
+	  if(id != null) {
+		  System.out.println(id + " has disconnected.");
+	  } else {
+		  System.out.println("A client has disconnected");
+	  }
+	  clientToId.remove(client);
+	  
+  }
+  
+  @Override
+  protected void clientException(ConnectionToClient client, Throwable exception) {
+      
+      System.out.println("[CLIENT ERROR] " + client + " -> " + exception);
+
+      
+      super.clientDisconnected(client);               
+      System.out.println(client + " has disconnected");
+  }
+
+  
+  
   
   /**
    * This method overrides the one in the superclass.  Called
@@ -105,6 +194,8 @@ public class EchoServer extends AbstractServer
     {
       System.out.println("ERROR - Could not listen for clients!");
     }
+    
+    new ServerConsole(sv).accept();
   }
 }
 //End of EchoServer class
